@@ -25,3 +25,7 @@ npm-debug.log*
 
 # mongodb-memory-server binary cache
 .cache/
+
+# Python (ml/)
+ml/.venv/
+__pycache__/
