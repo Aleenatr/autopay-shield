@@ -43,6 +43,15 @@ process.env.DB_URL = uri;
 // dead when it is running perfectly. Cost half an hour to find once; not twice.
 process.env.PORT = process.env.PORT || '5050';
 
+// Admin routes need an API key (src/middleware/requireApiKey.js). The demo
+// makes a fresh random one per run and prints it below.
+const { randomBytes } = await import('crypto');
+process.env.ADMIN_API_KEY = process.env.ADMIN_API_KEY || `demo-${randomBytes(8).toString('hex')}`;
+
+// No Redis in the demo, on purpose: skip connecting instead of retrying and
+// printing connection errors. The cache fails open, so everything still works.
+process.env.REDIS_ENABLED = 'false';
+
 // Import AFTER the env var is set. A static import would be hoisted above these
 // lines and connect to the wrong (or missing) database.
 const { default: connectDB } = await import('../src/config/database.js');
@@ -95,10 +104,11 @@ console.log(`  API      http://localhost:${process.env.PORT}`);
 console.log(`  Try      curl http://localhost:${process.env.PORT}/api/public/merchants?limit=5`);
 console.log(`           curl http://localhost:${process.env.PORT}/api/public/merchants/MRC_001`);
 console.log(`           curl http://localhost:${process.env.PORT}/api/public/stats`);
+console.log(`  Admin    curl -H "x-api-key: ${process.env.ADMIN_API_KEY}" http://localhost:${process.env.PORT}/api/admin/stats`);
 console.log('  Frontend cd ../website && npm run dev   -> http://localhost:5173');
 console.log('='.repeat(70));
-console.log('  Redis is not running. The cache fails open by design, so every');
-console.log('  request falls through to MongoDB and everything still works.');
+console.log('  Redis is switched off for the demo. The cache fails open by design,');
+console.log('  so every request reads MongoDB directly and everything still works.');
 console.log('  Ctrl-C to stop. Nothing is persisted.');
 console.log('='.repeat(70) + '\n');
 

@@ -17,9 +17,15 @@ const redisClient = createClient({
    }
 });
 
-// Error handling
+// Error handling: one short line per new problem, not a full stack trace on
+// every reconnect attempt (which buried the useful startup lines).
+let lastRedisProblem = null;
 redisClient.on('error', (err) => {
-   console.error('Redis Client Error:', err);
+   const problem = err.code || err.message;
+   if (problem !== lastRedisProblem) {
+      console.error(`Redis: ${problem} - caching paused, requests read MongoDB directly`);
+   }
+   lastRedisProblem = problem;
 });
 
 redisClient.on('connect', () => {
@@ -27,11 +33,19 @@ redisClient.on('connect', () => {
 });
 
 redisClient.on('ready', () => {
+   lastRedisProblem = null;
    console.log('Redis Client Ready');
 });
 
 // Connect to Redis
 export const connectRedis = async () => {
+   // REDIS_ENABLED=false runs without a cache on purpose (the demo does this).
+   // Every cache helper already checks isReady, so nothing else changes:
+   // a missing cache simply behaves like a cache miss.
+   if (process.env.REDIS_ENABLED === 'false') {
+      console.log('Redis: off (REDIS_ENABLED=false), running without a cache');
+      return;
+   }
    try {
       await redisClient.connect();
       console.log('✅ Redis Connected Successfully');

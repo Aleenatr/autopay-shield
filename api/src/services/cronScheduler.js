@@ -5,6 +5,8 @@ import { performKMeansClustering } from '../ingestion/analysis/kmeansAnalysis.js
 import { performDBSCANClustering } from '../ingestion/analysis/dbscanAnalysis.js';
 import generateMerchantScore from '../ingestion/analysis/merchantScoring.js';
 import generateApiResponse from '../ingestion/controller/generateApiResponse.js';
+import redisClient from '../config/redis.js';
+import { randomUUID } from 'crypto';
 
 /**
  * ============================ WHY THIS JOB EXISTS ============================
@@ -186,23 +188,68 @@ export async function reprocessAllMerchants() {
    }
 }
 
+// ============================ ONE RUN AT A TIME ==============================
+// Two runs at once would race each other's writes. That can happen two ways:
+//  1. Inside one server: a run takes longer than the gap until the next tick.
+//     The `running` flag below stops that.
+//  2. Across servers: two API replicas both fire at 06:00. A Redis lock stops
+//     that - SET with NX ("only if nobody holds it") and an expiry, so a server
+//     that crashes mid-run can't hold the lock forever. Only the holder of the
+//     random token can release it, so one server can't free another's lock.
+// If Redis is down, the lock is skipped (single-server behaviour), in line
+// with the cache, which also fails open.
+const LOCK_KEY = 'lock:reprocess-all-merchants';
+const LOCK_TTL_MS = 30 * 60 * 1000;   // longer than any run should take
+const RELEASE_IF_OWNER = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`;
+
+let running = false;
+
+export async function acquireLock(client = redisClient) {
+   if (!client?.isReady) return { acquired: true, token: null };   // no Redis: single-server mode
+   const token = randomUUID();
+   const ok = await client.set(LOCK_KEY, token, { NX: true, PX: LOCK_TTL_MS });
+   return { acquired: ok === 'OK', token };
+}
+
+export async function releaseLock(token, client = redisClient) {
+   if (!token || !client?.isReady) return;
+   await client.eval(RELEASE_IF_OWNER, { keys: [LOCK_KEY], arguments: [token] });
+}
+
+/**
+ * Run the population pass unless one is already running here or elsewhere.
+ * Returns the job's result, or { skipped: reason } when it did not run.
+ */
+export async function runGuarded(job = reprocessAllMerchants, client = redisClient) {
+   if (running) return { skipped: 'a run is already in progress on this server' };
+   running = true;
+   let lock = { acquired: false, token: null };
+   try {
+      lock = await acquireLock(client);
+      if (!lock.acquired) return { skipped: 'another server holds the lock' };
+      return await job();
+   } finally {
+      running = false;
+      if (lock.acquired) await releaseLock(lock.token, client);
+   }
+}
+
 /**
  * Schedule the job. The default cron expression is minute 0 of every 6th hour,
  * so 00:00 / 06:00 / 12:00 / 18:00 server-local. Overridable via CRON_SCHEDULE
  * (server.js:75). The five fields are: minute hour day-of-month month day-of-week.
  *
- * KNOWN LIMITATIONS, worth stating before anyone asks:
+ * KNOWN LIMITATION, worth stating before anyone asks:
  *  - Runs IN-PROCESS on the same event loop as the API. The clustering is the
  *    only CPU-bound work in the system, so during a large run it blocks HTTP.
- *    A separate worker process is the correct fix.
- *  - No distributed lock. Two API replicas would both fire at 06:00 and race
- *    each other's writes.
- *  - No run at boot, and no overlap guard.
+ *    A separate worker process is the correct fix. (Overlapping runs and
+ *    multi-server races are handled by runGuarded above.)
  */
 export function startCronJob(schedule = '0 */6 * * *') {
    const job = cron.schedule(schedule, async () => {
       try {
-         await reprocessAllMerchants();
+         const result = await runGuarded();
+         if (result?.skipped) console.log(`Cron run skipped: ${result.skipped}`);
       } catch (error) {
          console.error('Cron job execution failed:', error);
       }
@@ -214,7 +261,7 @@ export function startCronJob(schedule = '0 */6 * * *') {
 
 export async function runImmediateReprocessing() {
    console.log('\nRunning immediate reprocessing...');
-   return await reprocessAllMerchants();
+   return await runGuarded();
 }
 
-export default { startCronJob, reprocessAllMerchants, runImmediateReprocessing };
+export default { startCronJob, reprocessAllMerchants, runImmediateReprocessing, runGuarded };

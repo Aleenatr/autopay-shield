@@ -163,39 +163,41 @@ function cancellationFriction(data) {
  * component that scales the harm; speed alone, at low volume, is normal
  * processor behaviour.
  */
-function retryAggressiveness(data, metrics) {
-   if (!metrics.failed_transactions) return 0;
-
-   const volume = clamp01(
-      (metrics.total_retry_attempts / metrics.failed_transactions) / RETRIES_PER_FAILURE_SATURATION
-   );
-
-   // Earliest failure per subscription, so "how fast did they come back" is
-   // measured from the first thing that went wrong on that subscription.
-   const firstFailureBySub = new Map();
-   for (const txn of data.transactions) {
-      if (txn.status !== 'failed') continue;
-      const time = parseTime(txn.timestamp);
-      if (time === null) continue;
-      const existing = firstFailureBySub.get(txn.subscription_id);
-      if (existing === undefined || time < existing) {
-         firstFailureBySub.set(txn.subscription_id, time);
-      }
-   }
+function retryAggressiveness(data) {
+   // FIXED 9 Oct 2026 (found by the unit tests). The old version divided all
+   // retries by ALL failed transactions - but a retry that also fails is itself
+   // a failed transaction. In a chain "fail, retry, retry, retry" retries and
+   // failures grow together, so the ratio could never pass 1 and this signal
+   // topped out near 0.53 instead of 1.0. A failed CHARGE is the original
+   // attempt (attempt 1); retries are counted against those.
+   const originals = data.transactions.filter(t => t.status === 'failed' && t.attempt <= 1);
+   if (originals.length === 0) return 0;
 
    const retries = data.transactions.filter(t => t.attempt > 1);
+   const volume = clamp01((retries.length / originals.length) / RETRIES_PER_FAILURE_SATURATION);
    if (retries.length === 0) return clamp01(volume * 0.7);
 
+   // Speed: is each retry within 24h of the failed charge it is retrying - the
+   // latest original failure on the same subscription at or before it? (The old
+   // version measured from the subscription's FIRST-EVER failure, so a fast
+   // retry in a later month looked months late.)
+   const failureTimes = new Map();
+   for (const txn of originals) {
+      const time = parseTime(txn.timestamp);
+      if (time === null) continue;
+      if (!failureTimes.has(txn.subscription_id)) failureTimes.set(txn.subscription_id, []);
+      failureTimes.get(txn.subscription_id).push(time);
+   }
+
    const rapidRetries = retries.filter(txn => {
-      const failedAt = firstFailureBySub.get(txn.subscription_id);
       const retriedAt = parseTime(txn.timestamp);
-      if (failedAt === undefined || retriedAt === null) return false;
-      const hoursLater = (retriedAt - failedAt) / MS_PER_HOUR;
-      return hoursLater >= 0 && hoursLater <= RAPID_RETRY_HOURS;
+      const candidates = (failureTimes.get(txn.subscription_id) || []).filter(t => retriedAt !== null && t <= retriedAt);
+      if (candidates.length === 0) return false;
+      const hoursLater = (retriedAt - Math.max(...candidates)) / MS_PER_HOUR;
+      return hoursLater <= RAPID_RETRY_HOURS;
    }).length;
 
    const speed = clamp01(rapidRetries / retries.length);
-
    return clamp01(volume * 0.7 + speed * 0.3);
 }
 
@@ -213,7 +215,7 @@ export default function extractSignals(data) {
          stealth_price_changes: stealthPriceChanges(metrics),
          rename_frequency: renameFrequency(metrics),
          cancellation_friction: cancellationFriction(data),
-         retry_aggressiveness: retryAggressiveness(data, metrics)
+         retry_aggressiveness: retryAggressiveness(data)
       }
    };
 }

@@ -164,6 +164,13 @@ const merchantAnalysisSchema = new mongoose.Schema({
       risk_level: {
          type: String,
          enum: ['HEALTHY', 'NEEDS_ATTENTION', 'HIGH_RISK', 'CRITICAL']
+      },
+      // Declared here on purpose: the schema is strict, so a field the scorer
+      // writes but the schema doesn't know is silently dropped (the cron bug).
+      confidence: { type: String, enum: ['LOW', 'NORMAL'] },
+      evidence: {
+         transactions: Number,
+         history_months: Number
       }
    },
 
@@ -255,6 +262,8 @@ const apiResponseSchema = new mongoose.Schema({
          enum: ['HEALTHY', 'NEEDS_ATTENTION', 'HIGH_RISK', 'CRITICAL']
       },
       confidence: Number,
+      // How much evidence the trust score rests on: LOW = thin history (cold start).
+      scoreConfidence: { type: String, enum: ['LOW', 'NORMAL'] },
       isOutlier: Boolean,
       clusterMapping: String  // e.g., "AGGRESSIVE_PATTERN → HIGH_RISK"
    },

@@ -140,6 +140,26 @@ function getRiskLevel(trustScore) {
    return 'CRITICAL';
 }
 
+// ============================ COLD START ====================================
+// A merchant with three charges scores close to 100, because none of the six
+// signals has anything to fire on - "no evidence of abuse" is not "evidence of
+// no abuse". So every score now says how much evidence it rests on. Below
+// these minimums it is reported with LOW confidence instead of looking certain.
+// The score itself is not changed: hiding the number would be its own lie.
+const MIN_TRANSACTIONS = 6;      // fewer charges than this cannot show a pattern
+const MIN_HISTORY_MONTHS = 3;    // in under a quarter a price change cannot even repeat
+
+export function assessEvidence(cleanData) {
+   const times = (cleanData.transactions || [])
+      .map(t => new Date(t.timestamp).getTime())
+      .filter(Number.isFinite);
+   const months = times.length > 1
+      ? round2((Math.max(...times) - Math.min(...times)) / (1000 * 60 * 60 * 24 * 30))
+      : 0;
+   const level = times.length < MIN_TRANSACTIONS || months < MIN_HISTORY_MONTHS ? 'LOW' : 'NORMAL';
+   return { level, transactions: times.length, history_months: months };
+}
+
 /**
  * Human-readable abuse patterns. Each carries EVIDENCE — the specific numbers
  * that triggered it — because "this merchant is risky" is not actionable and
@@ -271,6 +291,7 @@ export default function generateMerchantScore(cleanData, signalData, dbscanResul
    const score = calculateTrustScore(score_breakdown);
    const risk_level = getRiskLevel(score);
    const patterns = detectPatterns(core, metrics);
+   const evidence = assessEvidence(cleanData);
 
    return {
       // Boolean roll-ups for callers that just want a yes/no (models:145-149).
@@ -287,7 +308,9 @@ export default function generateMerchantScore(cleanData, signalData, dbscanResul
       trust_score: {
          score,
          scale: '0-100, higher is safer',
-         risk_level
+         risk_level,
+         confidence: evidence.level,  // LOW = too little history to trust the number (see COLD START)
+         evidence: { transactions: evidence.transactions, history_months: evidence.history_months }
       },
 
       score_breakdown,

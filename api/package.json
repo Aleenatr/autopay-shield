@@ -5,12 +5,13 @@
   "description": "Api for app and website.",
   "main": "src/server.js",
   "scripts": {
-    "test": "node scripts/testPipeline.js",
+    "test": "node --test test/*.test.js",
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "demo": "node scripts/demo.js",
     "pipeline": "node scripts/testPipeline.js",
-    "fixtures": "node scripts/generateSampleData.js"
+    "fixtures": "node scripts/generateSampleData.js",
+    "benchmark": "node scripts/benchmark.js"
   },
   "author": "Mayank",
   "license": "MIT",
@@ -19,8 +20,6 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "groq-sdk": "^0.37.0",
-    "jsonwebtoken": "^9.0.3",
-    "ml-kmeans": "^7.0.0",
     "mongoose": "^9.1.4",
     "node-cron": "^4.2.1",
     "redis": "^5.10.0"

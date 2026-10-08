@@ -6,6 +6,7 @@ import { connectRedis } from "./config/redis.js";
 import adminRoutes from "./routes/admin.js";
 import publicRoutes from "./routes/public.js";
 import { startCronJob, runImmediateReprocessing } from "./services/cronScheduler.js";
+import requireApiKey from "./middleware/requireApiKey.js";
  
 dotenv.config();
 
@@ -21,6 +22,8 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
  
+// Every /api/admin route - including /reprocess-now below - needs the API key.
+app.use('/api/admin', requireApiKey);
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', publicRoutes);
  

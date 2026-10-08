@@ -121,6 +121,9 @@ export default function generateApiResponse({ cleanData, signals, scoring }) {
          // The clustering's own confidence in the archetype it assigned — NOT
          // confidence in the trust score, which is deterministic and has none.
          confidence: (scoring.cluster_assignment && scoring.cluster_assignment.confidence) || 0,
+         // Separate from `confidence` above: this one is about the trust SCORE.
+         // LOW means "too little history to be sure", the cold-start case.
+         scoreConfidence: scoring.trust_score.confidence || 'NORMAL',
          isOutlier: (scoring.anomaly_analysis && scoring.anomaly_analysis.is_outlier) || false,
          clusterMapping: scoring.cluster_mapping
       },
